@@ -1,0 +1,14 @@
+{
+  "name": "litestream-poc-app",
+  "version": "1.0.0",
+  "description": "A simple polling app for Litestream POC",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "ws": "^8.18.0"
+  }
+}
