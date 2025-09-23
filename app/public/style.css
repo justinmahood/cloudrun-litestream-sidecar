@@ -1,0 +1,74 @@
+body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background: #f0f2f5; }
+.container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 95%; max-width: 1200px; margin-top: 2rem; }
+h1, h2 { text-align: center; color: #333; }
+.section { margin-bottom: 2rem; border-top: 1px solid #ddd; padding-top: 1rem; }
+form { display: flex; flex-direction: column; gap: 0.5rem; }
+input, textarea, button { font-size: 1rem; padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc; }
+button { background-color: #007bff; color: white; border: none; cursor: pointer; }
+button:hover { background-color: #0056b3; }
+#feed { max-height: 400px; overflow-y: auto; border: 1px solid #eee; padding: 1rem; border-radius: 4px; }
+.post { border-bottom: 1px solid #eee; padding: 0.5rem 0; background-color: #fff; transition: background-color 1s; }
+.post:last-child { border-bottom: none; }
+.post.new { background-color: #e7f3ff; }
+.post strong { color: #007bff; }
+.main-content {
+  display: flex;
+  flex-direction: row;
+  gap: 2rem;
+}
+
+.left-panel {
+  flex: 1;
+}
+
+.right-panel {
+  flex: 1;
+}
+
+#stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.toggle-switch {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.toggle-switch label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.toggle-switch .slider {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 20px;
+  background-color: #ccc;
+  border-radius: 20px;
+  transition: background-color 0.3s;
+  margin: 0 10px;
+}
+
+.toggle-switch .slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  border-radius: 50%;
+  transition: transform 0.3s;
+}
+
+.toggle-switch input {
+  display: none;
+}
+
+.toggle-switch input:checked + .slider {
+  background-color: #007bff;
+}
+
+.toggle-switch input:checked + .slider:before {
+  transform: translateX(20px);
+}

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Litestream Stress Test</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Litestream Stress Test</h1>
+    <div class="main-content">
+      <div class="left-panel">
+        <div class="section">
+          <h2>Manual Post</h2>
+          <form id="post-form">
+            <input type="text" id="name" placeholder="Your Name" required>
+            <textarea id="content" placeholder="What's on your mind?" required></textarea>
+            <button type="submit">Post</button>
+          </form>
+        </div>
+
+        <div class="section">
+          <h2>Live Feed</h2>
+          <div id="feed"></div>
+        </div>
+      </div>
+      <div class="right-panel">
+        <div class="section">
+          <h2>Automated Stress Test</h2>
+          <div id="stats">
+            <p><strong>Status:</strong> <span id="worker-status">Stopped</span></p>
+            <p><strong>Writes/Sec:</strong> <span id="writes-per-sec">0</span></p>
+            <p><strong>Users Created (Session):</strong> <span id="users-created-session">0</span></p>
+            <p><strong>Posts Created (Session):</strong> <span id="posts-created-session">0</span></p>
+            <p><strong>Posts Updated (Session):</strong> <span id="posts-updated-session">0</span></p>
+            <p><strong>Posts Deleted (Session):</strong> <span id="posts-deleted-session">0</span></p>
+            <p><strong>Total Users (DB):</strong> <span id="total-users">0</span></p>
+            <p><strong>Total Posts (DB):</strong> <span id="total-posts">0</span></p>
+            <p><strong>DB File Size:</strong> <span id="db-file-size">0</span></p>
+          </div>
+          <form id="stress-form">
+            <div class="toggle-switch">
+              <label>
+                Server-side
+                <input type="checkbox" id="stress-test-side">
+                <span class="slider"></span>
+                Client-side
+              </label>
+            </div>
+            <input type="number" id="wps" value="50" placeholder="Writes per second">
+            <button type="submit">Start Test</button>
+            <button type="button" id="stop-btn">Stop Test</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/script.js"></script>
+</body>
+</html>

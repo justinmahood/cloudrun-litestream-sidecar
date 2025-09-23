@@ -1,5 +1,5 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const sqlite3 = require('sqlite3');
 const crypto = require('crypto');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -34,6 +34,8 @@ let worker = {
 let stats = {
   usersCreatedThisSession: 0,
   postsCreatedThisSession: 0,
+  postsUpdatedThisSession: 0,
+  postsDeletedThisSession: 0,
 };
 
 console.log(`--- Node App Started [${new Date().toISOString()}] ---`);
@@ -83,55 +85,87 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use(express.static('public'));
+
 // --- API Endpoints ---
 
-app.post('/posts', async (req, res) => {
+app.post('/posts', (req, res) => {
   const { name, content } = req.body;
   if (!name || !content) {
     return res.status(400).json({ error: 'Name and content are required.' });
   }
   const createdAt = new Date().toISOString();
 
-  try {
-    // Use a transaction for atomicity 
-    await db.run('BEGIN');
-    const userSql = `INSERT INTO users (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING`;
-    await db.run(userSql, [name, createdAt]);
+  if (req.get('X-Stress-Test')) {
+    if (content === 'This is a user creation post.') {
+      stats.usersCreatedThisSession++;
+    } else {
+      stats.postsCreatedThisSession++;
+    }
+  }
 
-    const user = await db.get('SELECT id FROM users WHERE name = ?', [name]);
-    if (!user) {
-      throw new Error('Failed to find or create user.');
+  db.run('BEGIN', (err) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
     }
 
-    const postSql = `INSERT INTO posts (user_id, content, created_at) VALUES (?, ?, ?)`;
-    await db.run(postSql, [user.id, content, createdAt]);
-    
-    await db.run('COMMIT');
+    const userSql = `INSERT INTO users (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING`;
+    db.run(userSql, [name, createdAt], (err) => {
+      if (err) {
+        db.run('ROLLBACK');
+        return res.status(500).json({ error: err.message });
+      }
 
-    broadcast({ type: 'NEW_POST', payload: { name, content, created_at: createdAt } });
-    res.status(201).json({ message: 'Post created' });
-  } catch (err) {
-    console.error('Post creation failed:', err.message);
-    await db.run('ROLLBACK');
-    res.status(500).json({ error: err.message });
-  }
+      db.get('SELECT id FROM users WHERE name = ?', [name], (err, user) => {
+        if (err) {
+          db.run('ROLLBACK');
+          return res.status(500).json({ error: err.message });
+        }
+
+        if (!user) {
+          db.run('ROLLBACK');
+          return res.status(500).json({ error: 'Failed to find or create user.' });
+        }
+
+        const postSql = `INSERT INTO posts (user_id, content, created_at) VALUES (?, ?, ?)`;
+        db.run(postSql, [user.id, content, createdAt], function (err) {
+          if (err) {
+            db.run('ROLLBACK');
+            return res.status(500).json({ error: err.message });
+          }
+
+          const lastID = this.lastID;
+          db.run('COMMIT', (err) => {
+            if (err) {
+              db.run('ROLLBACK');
+              return res.status(500).json({ error: err.message });
+            }
+
+            broadcast({ type: 'NEW_POST', payload: { id: lastID, name, content, created_at: createdAt } });
+            res.status(201).json({ message: 'Post created' });
+          });
+        });
+      });
+    });
+  });
 });
 
-app.get('/posts', async (req, res) => {
-  try {
-    const sql = `
-      SELECT p.content, p.created_at, u.name
-      FROM posts p
-      JOIN users u ON p.user_id = u.id
-      ORDER BY p.created_at DESC
-      LIMIT 20;
-    `;
-    const rows = await db.all(sql, []);
-    res.json(rows);
-  } catch (err) {
-    console.error('Get posts failed:', err.message);
-    res.status(500).json({ error: err.message });
-  }
+app.get('/posts', (req, res) => {
+  const sql = `
+    SELECT p.id, p.content, p.created_at, u.name
+    FROM posts p
+    JOIN users u ON p.user_id = u.id
+    ORDER BY p.created_at DESC
+    LIMIT 20;
+  `;
+  db.all(sql, [], (err, rows) => {
+    if (err) {
+      console.error('Get posts failed:', err.message);
+      res.status(500).json({ error: err.message });
+    } else {
+      res.json(rows);
+    }
+  });
 });
 
 app.post('/test/start', (req, res) => {
@@ -141,30 +175,71 @@ app.post('/test/start', (req, res) => {
   worker.isRunning = true;
   worker.writesPerSecond = parseInt(req.body.writesPerSecond) || 10;
   
-  worker.interval = setInterval(async () => {
-    try {
-      let newPost = null;
-      let newUser = null;
-      const createdAt = new Date().toISOString();
+  worker.interval = setInterval(() => {
+    let newPost = null;
+    let updatedPost = null;
+    let deletedPostId = null;
+    const createdAt = new Date().toISOString();
 
-      if (Math.random() < 0.8) {
-        const userCountRes = await db.get('SELECT COUNT(*) as count FROM users');
+    const action = Math.random();
+
+    if (action < 0.7) { // 70% chance to create a post
+      db.get('SELECT COUNT(*) as count FROM users', (err, userCountRes) => {
+        if (err) return;
         if (userCountRes.count > 0) {
-          const randomUser = await db.get('SELECT id, name FROM users ORDER BY RANDOM() LIMIT 1');
-          const content = `Automated post: ${crypto.randomBytes(8).toString('hex')}`;
-          await db.run('INSERT INTO posts (user_id, content, created_at) VALUES (?, ?, ?)', [randomUser.id, content, createdAt]);
-          stats.postsCreated++;
-          newPost = { name: randomUser.name, content, created_at: createdAt };
+          db.get('SELECT id, name FROM users ORDER BY RANDOM() LIMIT 1', (err, randomUser) => {
+            if (err) return;
+            const content = `Automated post: ${crypto.randomBytes(8).toString('hex')}`;
+            db.run('INSERT INTO posts (user_id, content, created_at) VALUES (?, ?, ?)', [randomUser.id, content, createdAt], function (err) {
+              if (err) return;
+              stats.postsCreatedThisSession++;
+              newPost = { id: this.lastID, name: randomUser.name, content, created_at: createdAt };
+              broadcast({ type: 'NEW_POST', payload: newPost });
+            });
+          });
         }
-      } else {
-        const name = `user_${crypto.randomBytes(4).toString('hex')}`;
-        await db.run('INSERT INTO users (name, created_at) VALUES (?, ?)', [name, createdAt]);
-        stats.usersCreated++;
-      }
-      if (newPost) {
-        broadcast({ type: 'NEW_POST', payload: newPost });
-      }
-    } catch (e) { /* ignore errors during stress test */ }
+      });
+    } else if (action < 0.85) { // 15% chance to update a post
+      db.get('SELECT COUNT(*) as count FROM posts', (err, postCountRes) => {
+        if (err) return;
+        if (postCountRes.count > 0) {
+          db.get('SELECT id, user_id FROM posts ORDER BY RANDOM() LIMIT 1', (err, randomPost) => {
+            if (err) return;
+            const content = `Updated post: ${crypto.randomBytes(8).toString('hex')}`;
+            db.run('UPDATE posts SET content = ? WHERE id = ?', [content, randomPost.id], (err) => {
+              if (err) return;
+              stats.postsUpdatedThisSession++;
+              db.get('SELECT name FROM users WHERE id = ?', [randomPost.user_id], (err, user) => {
+                if (err) return;
+                updatedPost = { id: randomPost.id, name: user.name, content, created_at: createdAt };
+                broadcast({ type: 'UPDATED_POST', payload: updatedPost });
+              });
+            });
+          });
+        }
+      });
+    } else if (action < 0.95) { // 10% chance to delete a post
+      db.get('SELECT COUNT(*) as count FROM posts', (err, postCountRes) => {
+        if (err) return;
+        if (postCountRes.count > 0) {
+          db.get('SELECT id FROM posts ORDER BY RANDOM() LIMIT 1', (err, randomPost) => {
+            if (err) return;
+            db.run('DELETE FROM posts WHERE id = ?', [randomPost.id], (err) => {
+              if (err) return;
+              stats.postsDeletedThisSession++;
+              deletedPostId = randomPost.id;
+              broadcast({ type: 'DELETED_POST', payload: { id: deletedPostId } });
+            });
+          });
+        }
+      });
+    } else { // 5% chance to create a user
+      const name = `user_${crypto.randomBytes(4).toString('hex')}`;
+      db.run('INSERT INTO users (name, created_at) VALUES (?, ?)', [name, createdAt], (err) => {
+        if (err) return;
+        stats.usersCreatedThisSession++;
+      });
+    }
   }, 1000 / worker.writesPerSecond);
 
   res.json({ message: `Stress test started with ${worker.writesPerSecond} writes/sec.` });
@@ -179,181 +254,38 @@ app.post('/test/stop', (req, res) => {
   res.json({ message: 'Stress test stopped.' });
 });
 
-app.get('/test/status', async (req, res) => {
-  try {
-    const userCount = await db.get('SELECT COUNT(*) as count FROM users');
-    const postCount = await db.get('SELECT COUNT(*) as count FROM posts');
+const fs = require('fs');
 
-    res.json({
-      usersCreatedThisSession: stats.usersCreatedThisSession,
-      postsCreatedThisSession: stats.postsCreatedThisSession,
-      isRunning: worker.isRunning,
-      writesPerSecond: worker.writesPerSecond,
-      totalUsers: userCount.count,
-      totalPosts: postCount.count
+app.get('/test/status', (req, res) => {
+  db.get('SELECT COUNT(*) as count FROM users', (err, userCount) => {
+    if (err) {
+      return res.status(500).json({ error: err.message });
+    }
+    db.get('SELECT COUNT(*) as count FROM posts', (err, postCount) => {
+      if (err) {
+        return res.status(500).json({ error: err.message });
+      }
+      const fileStats = fs.statSync(DB_PATH);
+      const fileSizeInBytes = fileStats.size;
+      res.json({
+        usersCreatedThisSession: stats.usersCreatedThisSession,
+        postsCreatedThisSession: stats.postsCreatedThisSession,
+        postsUpdatedThisSession: stats.postsUpdatedThisSession,
+        postsDeletedThisSession: stats.postsDeletedThisSession,
+        isRunning: worker.isRunning,
+        writesPerSecond: worker.writesPerSecond,
+        totalUsers: userCount.count,
+        totalPosts: postCount.count,
+        dbFileSize: fileSizeInBytes
+      });
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  });
 });
 
 // --- UI --- 
 
 app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Litestream Stress Test</title>
-      <style>
-        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background: #f0f2f5; }
-        .container { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 80%; max-width: 800px; margin-top: 2rem; }
-        h1, h2 { text-align: center; color: #333; }
-        .section { margin-bottom: 2rem; border-top: 1px solid #ddd; padding-top: 1rem; }
-        form { display: flex; flex-direction: column; gap: 0.5rem; }
-        input, textarea, button { font-size: 1rem; padding: 0.5rem; border-radius: 4px; border: 1px solid #ccc; }
-        button { background-color: #007bff; color: white; border: none; cursor: pointer; }
-        button:hover { background-color: #0056b3; }
-        #feed { max-height: 400px; overflow-y: auto; border: 1px solid #eee; padding: 1rem; border-radius: 4px; }
-        .post { border-bottom: 1px solid #eee; padding: 0.5rem 0; background-color: #fff; transition: background-color 1s; }
-        .post:last-child { border-bottom: none; }
-        .post.new { background-color: #e7f3ff; }
-        .post strong { color: #007bff; }
-        #stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <h1>Litestream Stress Test</h1>
-        
-        <div class="section">
-          <h2>Manual Post</h2>
-          <form id="post-form">
-            <input type="text" id="name" placeholder="Your Name" required>
-            <textarea id="content" placeholder="What's on your mind?" required></textarea>
-            <button type="submit">Post</button>
-          </form>
-        </div>
-
-        <div class="section">
-          <h2>Automated Stress Test</h2>
-          <div id="stats">
-            <p><strong>Status:</strong> <span id="worker-status">Stopped</span></p>
-            <p><strong>Writes/Sec:</strong> <span id="writes-per-sec">0</span></p>
-            <p><strong>Users Created (Session):</strong> <span id="users-created-session">0</span></p>
-            <p><strong>Posts Created (Session):</strong> <span id="posts-created-session">0</span></p>
-            <p><strong>Total Users (DB):</strong> <span id="total-users">0</span></p>
-            <p><strong>Total Posts (DB):</strong> <span id="total-posts">0</span></p>
-          </div>
-          <form id="stress-form">
-            <input type="number" id="wps" value="50" placeholder="Writes per second">
-            <button type="submit">Start Test</button>
-            <button type="button" id="stop-btn">Stop Test</button>
-          </form>
-        </div>
-
-        <div class="section">
-          <h2>Live Feed</h2>
-          <div id="feed"></div>
-        </div>
-      </div>
-
-      <script>
-        const postForm = document.getElementById('post-form');
-        const stressForm = document.getElementById('stress-form');
-        const stopBtn = document.getElementById('stop-btn');
-        const feedDiv = document.getElementById('feed');
-
-        // --- WebSocket Connection ---
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const socket = new WebSocket(protocol + '://' + window.location.host);
-
-        socket.onopen = () => console.log('WebSocket connection established');
-        socket.onclose = () => console.log('WebSocket connection closed');
-        socket.onerror = (error) => console.error('WebSocket Error:', error);
-        socket.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.type === 'NEW_POST') {
-            prependPost(data.payload);
-          }
-        };
-
-        function createPostElement(post) {
-            const el = document.createElement('div');
-            el.className = 'post new';
-            el.innerHTML = '<strong>' + post.name + '</strong>: ' + post.content +
-                         '<br><small>' + new Date(post.created_at).toLocaleString() + '</small>';
-            // Remove the 'new' class after animation
-            setTimeout(() => el.classList.remove('new'), 1000);
-            return el;
-        }
-
-        function prependPost(post) {
-            const postElement = createPostElement(post);
-            feedDiv.prepend(postElement);
-            // Keep the feed to a max of 20 posts
-            while (feedDiv.children.length > 20) {
-                feedDiv.removeChild(feedDiv.lastChild);
-            }
-        }
-
-        // --- Manual Posting ---
-        postForm.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const name = document.getElementById('name').value;
-          const content = document.getElementById('content').value;
-          await fetch('/posts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, content })
-          });
-          postForm.reset();
-        });
-
-        // --- Stress Test Controls ---
-        stressForm.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const writesPerSecond = document.getElementById('wps').value;
-          await fetch('/test/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ writesPerSecond })
-          });
-        });
-
-        stopBtn.addEventListener('click', async () => {
-          await fetch('/test/stop', { method: 'POST' });
-        });
-
-        // --- Data Fetching ---
-        async function fetchInitialFeed() {
-          const res = await fetch('/posts');
-          const posts = await res.json();
-          feedDiv.innerHTML = ''; // Clear existing
-          posts.forEach(post => feedDiv.appendChild(createPostElement(post)));
-        }
-
-        async function fetchStatus() {
-          const res = await fetch('/test/status');
-          const status = await res.json();
-          document.getElementById('worker-status').textContent = status.isRunning ? 'Running' : 'Stopped';
-          document.getElementById('writes-per-sec').textContent = status.writesPerSecond;
-          document.getElementById('users-created-session').textContent = status.usersCreatedThisSession;
-          document.getElementById('posts-created-session').textContent = status.postsCreatedThisSession;
-          document.getElementById('total-users').textContent = status.totalUsers;
-          document.getElementById('total-posts').textContent = status.totalPosts;
-        }
-
-        // --- Initial Load & Periodic Refresh ---
-        fetchInitialFeed();
-        fetchStatus();
-        setInterval(fetchStatus, 2000); // Refresh stats every 2 seconds
-      </script>
-    </body>
-    </html>
-  `);
+  res.sendFile('index.html', { root: 'public' });
 });
 
 // We now need to listen on the http server, not the express app
@@ -361,8 +293,4 @@ server.listen(port, () => {
   console.log(`+++ App is running and listening on port ${port} +++`);
 });
 
-// Promisify db methods for async/await usage in worker
-const util = require('util');
-db.run = util.promisify(db.run);
-db.get = util.promisify(db.get);
-db.all = util.promisify(db.all);
+
