@@ -71,6 +71,18 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
         created_at TEXT,
         FOREIGN KEY (user_id) REFERENCES users (id)
       );
+      DROP TABLE IF EXISTS posts_fts;
+      CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(name, content, content='posts', content_rowid='id');
+      CREATE TRIGGER IF NOT EXISTS posts_ai AFTER INSERT ON posts BEGIN
+        INSERT INTO posts_fts(rowid, name, content) VALUES (new.id, (SELECT name FROM users WHERE id = new.user_id), new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS posts_ad AFTER DELETE ON posts BEGIN
+        INSERT INTO posts_fts(posts_fts, rowid, name, content) VALUES ('delete', old.id, (SELECT name FROM users WHERE id = old.user_id), old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS posts_au AFTER UPDATE ON posts BEGIN
+        INSERT INTO posts_fts(posts_fts, rowid, name, content) VALUES ('delete', old.id, (SELECT name FROM users WHERE id = old.user_id), old.content);
+        INSERT INTO posts_fts(rowid, name, content) VALUES (new.id, (SELECT name FROM users WHERE id = new.user_id), new.content);
+      END;
     `;
     db.exec(schema, (err) => {
       if (err) {
@@ -147,6 +159,32 @@ app.post('/posts', (req, res) => {
         });
       });
     });
+  });
+});
+
+app.get('/search', (req, res) => {
+  const query = req.query.q;
+  if (!query) {
+    return res.status(400).json({ error: 'Query is required.' });
+  }
+
+  const sql = `
+    SELECT p.id, p.content, p.created_at, u.name
+    FROM posts_fts f
+    JOIN posts p ON f.rowid = p.id
+    JOIN users u ON p.user_id = u.id
+    WHERE f.posts_fts MATCH ?
+    ORDER BY p.created_at DESC
+    LIMIT 20;
+  `;
+
+  db.all(sql, [query + '*'], (err, rows) => {
+    if (err) {
+      console.error('Search failed:', err.message);
+      res.status(500).json({ error: err.message });
+    } else {
+      res.json(rows);
+    }
   });
 });
 
@@ -291,6 +329,15 @@ app.get('/', (req, res) => {
 // We now need to listen on the http server, not the express app
 server.listen(port, () => {
   console.log(`+++ App is running and listening on port ${port} +++`);
+  
+  // Index existing data in the background
+  db.run('INSERT INTO posts_fts(rowid, name, content) SELECT p.id, u.name, p.content FROM posts p JOIN users u ON p.user_id = u.id', (err) => {
+    if (err) {
+      console.error('Error indexing existing data:', err.message);
+    } else {
+      console.log('+++ Existing data indexed successfully. +++');
+    }
+  });
 });
 
 

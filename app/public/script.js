@@ -58,6 +58,33 @@ function deletePost(postId) {
     }
 }
 
+const searchForm = document.getElementById('search-form');
+const searchQuery = document.getElementById('search-query');
+
+// --- Search ---
+searchForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  fetchSearchResults();
+});
+
+searchQuery.addEventListener('keyup', () => {
+  fetchSearchResults();
+});
+
+async function fetchSearchResults() {
+  const query = searchQuery.value;
+  if (!query) {
+    fetchInitialFeed();
+    return;
+  }
+
+  const res = await fetch(`/search?q=${query}`);
+  const posts = await res.json();
+  feedDiv.innerHTML = ''; // Clear existing
+  posts.forEach(post => feedDiv.appendChild(createPostElement(post)));
+}
+
+
 // --- Manual Posting ---
 postForm.addEventListener('submit', async (e) => {
   e.preventDefault();
