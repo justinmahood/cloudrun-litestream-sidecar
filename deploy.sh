@@ -6,8 +6,8 @@ gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudb
 
 # Check for required environment variables
 if [ -z "${PROJECT_ID:-}" ]; then
-  echo "PROJECT_ID environment variable is not set."
-  exit 1
+  echo "PROJECT_ID environment variable is not set, using gcloud config get-value project."
+  PROJECT_ID=$(gcloud config get-value project)
 fi
 if [ -z "${GCS_BUCKET_NAME:-}" ]; then
   echo "GCS_BUCKET_NAME environment variable is not set."
