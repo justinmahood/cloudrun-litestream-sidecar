@@ -1,35 +1,27 @@
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
+  name: litestream-demo
   annotations:
-    run.googleapis.com/ingress: all
     run.googleapis.com/maxScale: '1'
-  name: litestreamdemo
+    run.googleapis.com/invoker-iam-disabled: true
 spec:
   template:
     metadata:
       annotations:
-        run.googleapis.com/container-dependencies: '{"voteapp-ls-1":["litestream-run-1"]}'
+        run.googleapis.com/container-dependencies: '{"app":["litestream"]}'
         run.googleapis.com/cpu-throttling: 'false'
         run.googleapis.com/execution-environment: gen2
-        run.googleapis.com/startup-cpu-boost: 'true'
-      labels:
-        run.googleapis.com/startupProbeType: Default
     spec:
-      containerConcurrency: 80
       containers:
-      - env:
+      - name: app
+        image: YOUR-REGION-docker.pkg.dev/YOUR-PROJECT-ID/containers/app:latest
+        env:
         - name: DB_PATH
           value: /data/poll.db
-        image: gcr.io/jmahood-demo/voteapp-ls:latest
-        name: voteapp-ls-1
         ports:
         - containerPort: 8080
           name: http1
-        resources:
-          limits:
-            cpu: 1000m
-            memory: 512Mi
         startupProbe:
           failureThreshold: 1
           periodSeconds: 240
@@ -38,20 +30,16 @@ spec:
           timeoutSeconds: 240
         volumeMounts:
         - mountPath: /data
-          name: in-memory-1
-      - env:
+          name: in-memory
+      - name: litestream
+        image: YOUR-REGION-docker.pkg.dev/YOUR-PROJECT-ID/containers/litestream:latest
+        env:
         - name: DB_PATH
           value: /data/poll.db
         - name: GCS_BUCKET_NAME
-          value: jmahood-demo-sqlite
+          value: YOUR-BUCKET-ID
         - name: GCS_PATH_PREFIX
           value: poll
-        image: gcr.io/jmahood-demo/litestream-run:latest
-        name: litestream-run-1
-        resources:
-          limits:
-            cpu: 1000m
-            memory: 512Mi
         startupProbe:
           failureThreshold: 3
           periodSeconds: 10
@@ -60,10 +48,9 @@ spec:
           timeoutSeconds: 1
         volumeMounts:
         - mountPath: /data
-          name: in-memory-1
-      timeoutSeconds: 300
+          name: in-memory
       volumes:
       - emptyDir:
           medium: Memory
           sizeLimit: 2Gi
-        name: in-memory-1
+        name: in-memory
