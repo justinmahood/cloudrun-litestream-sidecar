@@ -1,6 +1,6 @@
 # Cloud Run with Litestream Sidecar
 
-This repository demonstrates how to run a stateful application with a serverless, scale-t-zero SQL database on Cloud Run. It uses a sidecar running [Litestream](https://litestream.io/) to replicate and restore a [SQLite](https://sqlite.org/) database to Google Cloud Storage, you can leverage the cost-saving benefits of serverless without giving up SQL compatibility.
+This repository demonstrates how to run a stateful application with a serverless, scale-to-zero SQL database on Cloud Run. It uses a sidecar running [Litestream](https://litestream.io/) to replicate and restore a [SQLite](https://sqlite.org/) database to Google Cloud Storage, you can leverage the cost-saving benefits of serverless without giving up SQL compatibility.
 
 ## Architecture
 
