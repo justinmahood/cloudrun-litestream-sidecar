@@ -29,7 +29,7 @@ sed -e "s/YOUR-PROJECT-ID/${PROJECT_ID}/g" \
     service.yaml > service.yaml.tmp
 
 # Deploy to Cloud Run
-gcloud run services replace service.yaml.tmp
+gcloud run services replace service.yaml.tmp --region $REGION 
 
 # Clean up the temporary file
 rm service.yaml.tmp
