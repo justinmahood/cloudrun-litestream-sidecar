@@ -11,6 +11,10 @@ socket.onopen = () => console.log('WebSocket connection established');
 socket.onclose = () => console.log('WebSocket connection closed');
 socket.onerror = (error) => console.error('WebSocket Error:', error);
 socket.onmessage = (event) => {
+  const query = searchQuery.value;
+  if (query) {
+    return;
+  }
   const data = JSON.parse(event.data);
   if (data.type === 'NEW_POST') {
     prependPost(data.payload);
@@ -73,13 +77,21 @@ searchQuery.addEventListener('keyup', () => {
 
 async function fetchSearchResults() {
   const query = searchQuery.value;
+  const searchStats = document.getElementById('search-stats');
+
   if (!query) {
     fetchInitialFeed();
+    searchStats.innerHTML = '';
     return;
   }
 
   const res = await fetch(`/search?q=${query}`);
-  const posts = await res.json();
+  const data = await res.json();
+  const posts = data.results;
+  const count = data.count;
+
+  searchStats.innerHTML = `${count} records found`;
+
   feedDiv.innerHTML = ''; // Clear existing
   posts.forEach(post => feedDiv.appendChild(createPostElement(post)));
 }
@@ -110,11 +122,14 @@ stressForm.addEventListener('submit', async (e) => {
     // Client-side stress test
     if (clientWorker.isRunning) return;
     clientWorker.isRunning = true;
+
+    const { faker } = await import('https://esm.sh/@faker-js/faker');
+
     clientWorker.interval = setInterval(async () => {
       const action = Math.random();
       if (action < 0.7) { // 70% chance to create a post
-        const name = `user_${Math.random().toString(36).substring(2, 10)}`
-        const content = `Client-side post: ${Math.random().toString(36).substring(2, 10)}`
+        const name = faker.internet.username();
+        const content = faker.lorem.sentence();
         await fetch('/posts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Stress-Test': 'true' },
@@ -125,7 +140,7 @@ stressForm.addEventListener('submit', async (e) => {
       } else if (action < 0.95) { // 10% chance to delete a post
         // Not implemented for client-side test, as we don't have post IDs
       } else { // 5% chance to create a user
-        const name = `user_${Math.random().toString(36).substring(2, 10)}`
+        const name = faker.internet.username();
         await fetch('/posts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Stress-Test': 'true' },
@@ -143,6 +158,8 @@ stressForm.addEventListener('submit', async (e) => {
   }
 });
 
+const clearDbBtn = document.getElementById('clear-db-btn');
+
 stopBtn.addEventListener('click', async () => {
   if (stressTestSide.checked) {
     // Client-side stress test
@@ -152,6 +169,10 @@ stopBtn.addEventListener('click', async () => {
     // Server-side stress test
     await fetch('/test/stop', { method: 'POST' });
   }
+});
+
+clearDbBtn.addEventListener('click', async () => {
+  await fetch('/test/clear-db', { method: 'POST' });
 });
 
 // --- Data Fetching ---

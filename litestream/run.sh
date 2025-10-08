@@ -14,7 +14,7 @@ cat > /etc/litestream.yml <<EOF
 dbs:
   - path: "${DB_PATH}"
     replicas:
-      - type: "gcs"
+      - type: "gs"
         bucket: "${GCS_BUCKET_NAME}"
         path: "${GCS_PATH_PREFIX}"
 EOF

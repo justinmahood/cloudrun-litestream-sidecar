@@ -1,5 +1,6 @@
 const express = require('express');
 const sqlite3 = require('sqlite3');
+
 const crypto = require('crypto');
 const http = require('http');
 const { WebSocketServer } = require('ws');
@@ -168,23 +169,36 @@ app.get('/search', (req, res) => {
     return res.status(400).json({ error: 'Query is required.' });
   }
 
-  const sql = `
-    SELECT p.id, p.content, p.created_at, u.name
-    FROM posts_fts f
-    JOIN posts p ON f.rowid = p.id
-    JOIN users u ON p.user_id = u.id
-    WHERE f.posts_fts MATCH ?
-    ORDER BY p.created_at DESC
-    LIMIT 20;
+  const countSql = `
+    SELECT count(*) as count
+    FROM posts_fts
+    WHERE posts_fts MATCH ?;
   `;
 
-  db.all(sql, [query + '*'], (err, rows) => {
+  db.get(countSql, [query + '*'], (err, row) => {
     if (err) {
-      console.error('Search failed:', err.message);
-      res.status(500).json({ error: err.message });
-    } else {
-      res.json(rows);
+      console.error('Search count failed:', err.message);
+      return res.status(500).json({ error: err.message });
     }
+
+    const sql = `
+      SELECT p.id, p.content, p.created_at, u.name
+      FROM posts_fts f
+      JOIN posts p ON f.rowid = p.id
+      JOIN users u ON p.user_id = u.id
+      WHERE f.posts_fts MATCH ?
+      ORDER BY p.created_at DESC
+      LIMIT 20;
+    `;
+
+    db.all(sql, [query + '*'], (err, rows) => {
+      if (err) {
+        console.error('Search failed:', err.message);
+        res.status(500).json({ error: err.message });
+      } else {
+        res.json({ count: row.count, results: rows });
+      }
+    });
   });
 });
 
@@ -206,12 +220,14 @@ app.get('/posts', (req, res) => {
   });
 });
 
-app.post('/test/start', (req, res) => {
+app.post('/test/start', async (req, res) => {
   if (worker.isRunning) {
     return res.status(400).json({ message: 'Worker is already running.' });
   }
   worker.isRunning = true;
   worker.writesPerSecond = parseInt(req.body.writesPerSecond) || 10;
+
+  const { faker } = await import('@faker-js/faker');
   
   worker.interval = setInterval(() => {
     let newPost = null;
@@ -227,7 +243,7 @@ app.post('/test/start', (req, res) => {
         if (userCountRes.count > 0) {
           db.get('SELECT id, name FROM users ORDER BY RANDOM() LIMIT 1', (err, randomUser) => {
             if (err) return;
-            const content = `Automated post: ${crypto.randomBytes(8).toString('hex')}`;
+            const content = faker.lorem.sentence();
             db.run('INSERT INTO posts (user_id, content, created_at) VALUES (?, ?, ?)', [randomUser.id, content, createdAt], function (err) {
               if (err) return;
               stats.postsCreatedThisSession++;
@@ -243,7 +259,7 @@ app.post('/test/start', (req, res) => {
         if (postCountRes.count > 0) {
           db.get('SELECT id, user_id FROM posts ORDER BY RANDOM() LIMIT 1', (err, randomPost) => {
             if (err) return;
-            const content = `Updated post: ${crypto.randomBytes(8).toString('hex')}`;
+            const content = faker.lorem.sentence();
             db.run('UPDATE posts SET content = ? WHERE id = ?', [content, randomPost.id], (err) => {
               if (err) return;
               stats.postsUpdatedThisSession++;
@@ -272,7 +288,7 @@ app.post('/test/start', (req, res) => {
         }
       });
     } else { // 5% chance to create a user
-      const name = `user_${crypto.randomBytes(4).toString('hex')}`;
+      const name = faker.internet.username();
       db.run('INSERT INTO users (name, created_at) VALUES (?, ?)', [name, createdAt], (err) => {
         if (err) return;
         stats.usersCreatedThisSession++;
@@ -281,6 +297,15 @@ app.post('/test/start', (req, res) => {
   }, 1000 / worker.writesPerSecond);
 
   res.json({ message: `Stress test started with ${worker.writesPerSecond} writes/sec.` });
+});
+
+app.post('/test/clear-db', (req, res) => {
+  db.serialize(() => {
+    db.run('DELETE FROM posts_fts');
+    db.run('DELETE FROM posts');
+    db.run('DELETE FROM users');
+    res.status(200).json({ message: 'Database cleared.' });
+  });
 });
 
 app.post('/test/stop', (req, res) => {

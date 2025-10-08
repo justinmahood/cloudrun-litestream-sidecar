@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ./app
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_PATH=/data/poll.db
+      - PORT=8080
+    volumes:
+      - shared_data:/data
+    depends_on:
+      - litestream
+
+  litestream:
+    build:
+      context: /Users/jmahood/src
+      dockerfile: litestream-cloudrun-poc/litestream/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - ./.env
+    environment:
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - shared_data:/data
+      # Mount your local gcloud credentials to authenticate with GCS
+      # Make sure you have run 'gcloud auth application-default login'
+#      - ~/.config/gcloud/application_default_credentials.json:/root/.config/gcloud/application_default_credentials.json:ro
+
+volumes:
+  shared_data:
+    x-google-cloudrun:
+      volume-type: in-memory

@@ -43,7 +43,7 @@ spec:
         - name: DB_PATH
           value: /data/poll.db
         - name: GCS_BUCKET_NAME
-          value: jmahood-demo-sqlite
+          value: litestream-ltx
         - name: GCS_PATH_PREFIX
           value: poll
         image: gcr.io/jmahood-demo/litestream-run:latest
